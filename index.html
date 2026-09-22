@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lead Scrubber</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --ink:#1c2b2d;
+    --paper:#f6f3ec;
+    --line:#d8d2c2;
+    --moss:#3f5d54;
+    --moss-dark:#2c433c;
+    --rust:#b5502f;
+    --muted:#8a8578;
+    box-sizing:border-box;
+    padding-top:env(safe-area-inset-top,0px);
+    padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;}
+  html{scroll-padding-top:env(safe-area-inset-top,0px);}
+  body{
+    margin:0;
+    min-height:100%;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:"Iowan Old Style","Palatino Linotype",Georgia,serif;
+    display:flex;
+    justify-content:center;
+    padding:48px 20px 64px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ink:#ece7da; --paper:#1b201d; --line:#3a4139;
+      --moss:#8fb3a3; --moss-dark:#a9c9bb; --rust:#e08a63; --muted:#8c9188;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#ece7da; --paper:#1b201d; --line:#3a4139;
+    --moss:#8fb3a3; --moss-dark:#a9c9bb; --rust:#e08a63; --muted:#8c9188;
+  }
+  .sheet{width:100%; max-width:640px;}
+  .kicker{
+    font-family:"Courier New",monospace; font-size:12px; letter-spacing:.04em;
+    color:var(--muted); margin:0 0 6px;
+  }
+  h1{font-size:34px; line-height:1.15; margin:0 0 10px; font-weight:600;}
+  .lede{color:var(--muted); font-size:16px; line-height:1.5; margin:0 0 36px; max-width:48ch;}
+
+  .step{
+    border-top:1px solid var(--line);
+    padding:24px 0;
+    display:none;
+  }
+  .step.show{display:block;}
+  .step:first-of-type{border-top:none; padding-top:0;}
+  .step-num{
+    font-family:"Courier New",monospace;
+    font-size:12px; color:var(--muted); margin:0 0 10px;
+  }
+  .step h2{font-size:19px; margin:0 0 14px; font-weight:600;}
+
+  .dropzone{
+    border:1px solid var(--line);
+    border-radius:2px;
+    padding:28px;
+    text-align:left;
+    transition:border-color .15s ease, background .15s ease;
+  }
+  .dropzone.drag{
+    border-color:var(--moss);
+    background:color-mix(in srgb, var(--moss) 6%, transparent);
+  }
+  .dropzone label{
+    display:inline-flex; align-items:center; gap:10px; cursor:pointer;
+    color:var(--moss-dark); font-weight:600; text-decoration:underline; text-underline-offset:3px;
+  }
+  input[type=file]{position:absolute; width:1px;height:1px; overflow:hidden; clip:rect(0,0,0,0);}
+  .filename{margin-top:10px; font-size:14px; color:var(--muted);}
+
+  .field-row{display:flex; flex-wrap:wrap; gap:20px; margin-bottom:6px;}
+  .field{flex:1; min-width:220px;}
+  .field label{
+    display:block; font-size:13px; color:var(--muted); margin-bottom:6px;
+  }
+  select{
+    width:100%;
+    font:inherit; font-size:15px; color:var(--ink);
+    background:var(--paper); border:1px solid var(--line); border-radius:2px;
+    padding:10px 10px;
+  }
+  select:disabled{ color:var(--muted); }
+
+  button.run{
+    font:inherit; font-size:15px; font-weight:600; color:var(--paper);
+    background:var(--moss-dark); border:none; border-radius:2px;
+    padding:13px 22px; cursor:pointer; letter-spacing:.01em; margin-top:20px;
+  }
+  button.run:disabled{background:var(--muted); cursor:not-allowed;}
+  button.run:hover:not(:disabled){background:var(--moss);}
+
+  .result{margin-top:6px;}
+  .stat-line{display:flex; gap:28px; margin-bottom:22px; flex-wrap:wrap;}
+  .stat b{display:block; font-size:28px; line-height:1;}
+  .stat span{display:block; font-size:13px; color:var(--muted); margin-top:4px;}
+  .stat.removed b{color:var(--rust);}
+  .stat.kept b{color:var(--moss-dark);}
+  a.download{
+    display:inline-flex; align-items:center; gap:10px;
+    background:var(--rust); color:var(--paper); text-decoration:none; font-weight:600;
+    padding:13px 22px; border-radius:2px;
+  }
+  a.download:hover{opacity:.92;}
+
+  .error{margin-top:18px; color:var(--rust); font-size:14px; display:none;}
+  .error.show{display:block;}
+
+  .hint{font-size:13px; color:var(--muted); margin-top:8px; line-height:1.6;}
+</style>
+</head>
+<body>
+<div class="sheet">
+  <p class="kicker">LEAD LIST TOOL</p>
+  <h1>Remove leads who already paid</h1>
+  <p class="lede">Upload a workbook, pick which sheet holds your leads and which sheet holds the paid list, then choose which columns to match on. Any lead whose value matches gets removed.</p>
+
+  <div class="step show" id="step-upload">
+    <p class="step-num">STEP 1</p>
+    <h2>Upload your file</h2>
+    <div class="dropzone" id="dropzone">
+      <label for="file">Choose Excel file <span style="text-decoration:none;">(.xlsx)</span></label>
+      <input type="file" id="file" accept=".xlsx,.xls">
+      <div class="filename" id="filename">No file chosen yet.</div>
+    </div>
+    <div class="error" id="uploadError"></div>
+  </div>
+
+  <div class="step" id="step-sheets">
+    <p class="step-num">STEP 2</p>
+    <h2>Choose your sheets</h2>
+    <div class="field-row">
+      <div class="field">
+        <label for="mainSheet">Main sheet (your leads)</label>
+        <select id="mainSheet"></select>
+      </div>
+      <div class="field">
+        <label for="paidSheet">Paid sheet (who already paid)</label>
+        <select id="paidSheet"></select>
+      </div>
+    </div>
+  </div>
+
+  <div class="step" id="step-columns">
+    <p class="step-num">STEP 3</p>
+    <h2>Choose which columns to match</h2>
+    <div class="field-row">
+      <div class="field">
+        <label for="paidColumn">Column in paid sheet to filter by</label>
+        <select id="paidColumn"></select>
+      </div>
+      <div class="field">
+        <label for="mainColumn">Matching column in main sheet</label>
+        <select id="mainColumn"></select>
+      </div>
+    </div>
+    <p class="hint">Rows in the main sheet are removed when this column's value matches any value found in the paid sheet's column above. Matching ignores case and extra spaces.</p>
+    <button class="run" id="runBtn">Remove matched rows</button>
+    <div class="error" id="runError"></div>
+  </div>
+
+  <div class="step" id="step-result">
+    <p class="step-num">DONE</p>
+    <h2>Filtered file ready</h2>
+    <div class="result">
+      <div class="stat-line">
+        <div class="stat"><b id="totalLeads">0</b><span>total rows</span></div>
+        <div class="stat removed"><b id="removedCount">0</b><span>removed (matched)</span></div>
+        <div class="stat kept"><b id="keptCount">0</b><span>remaining</span></div>
+      </div>
+      <p class="hint" id="outNameHint" style="margin-top:0;"></p>
+      <a class="download" id="downloadLink" href="#" download="Lead Filtered.xlsx">Download filtered file</a>
+    </div>
+  </div>
+</div>
+
+<script>
+const fileInput = document.getElementById('file');
+const dropzone = document.getElementById('dropzone');
+const filenameEl = document.getElementById('filename');
+const uploadError = document.getElementById('uploadError');
+const runError = document.getElementById('runError');
+
+const stepSheets = document.getElementById('step-sheets');
+const stepColumns = document.getElementById('step-columns');
+const stepResult = document.getElementById('step-result');
+
+const mainSheetSel = document.getElementById('mainSheet');
+const paidSheetSel = document.getElementById('paidSheet');
+const paidColumnSel = document.getElementById('paidColumn');
+const mainColumnSel = document.getElementById('mainColumn');
+const runBtn = document.getElementById('runBtn');
+
+let workbook = null;
+let originalFileName = '';
+
+function showErr(el, msg){ el.textContent = msg; el.classList.add('show'); }
+function clearErr(el){ el.textContent = ''; el.classList.remove('show'); }
+
+function resetAfterUpload(){
+  stepSheets.classList.remove('show');
+  stepColumns.classList.remove('show');
+  stepResult.classList.remove('show');
+  clearErr(runError);
+}
+
+fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+['dragenter','dragover'].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add('drag'); }));
+['dragleave','drop'].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove('drag'); }));
+dropzone.addEventListener('drop', e => {
+  const f = e.dataTransfer.files[0];
+  if (f){ fileInput.files = e.dataTransfer.files; handleFile(f); }
+});
+
+function handleFile(file){
+  clearErr(uploadError);
+  resetAfterUpload();
+  filenameEl.textContent = file.name;
+  originalFileName = file.name.replace(/\.(xlsx|xls)$/i, '');
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try{
+      const data = new Uint8Array(e.target.result);
+      workbook = XLSX.read(data, {type:'array'});
+      if (!workbook.SheetNames.length) throw new Error('No sheets found in this file.');
+      populateSheetSelects();
+      stepSheets.classList.add('show');
+      stepColumns.classList.add('show');
+      populateColumnSelects();
+    }catch(err){
+      workbook = null;
+      showErr(uploadError, err.message || 'Could not read that file.');
+    }
+  };
+  reader.onerror = () => showErr(uploadError, 'Could not read that file.');
+  reader.readAsArrayBuffer(file);
+}
+
+function populateSheetSelects(){
+  const names = workbook.SheetNames;
+  const options = names.map(n => `<option value="${n}">${n}</option>`).join('');
+  mainSheetSel.innerHTML = options;
+  paidSheetSel.innerHTML = options;
+  // sensible default guesses
+  const leadGuess = names.find(n => n.trim().toLowerCase() === 'lead') || names[0];
+  const payGuess = names.find(n => n.trim().toLowerCase() === 'pay') || (names[1] || names[0]);
+  mainSheetSel.value = leadGuess;
+  paidSheetSel.value = payGuess;
+}
+
+function headerRow(sheetName){
+  const sheet = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(sheet, {defval:'', header:1});
+  return rows.length ? rows[0].map(h => String(h)) : [];
+}
+
+function populateColumnSelects(){
+  const mainHeaders = headerRow(mainSheetSel.value);
+  const paidHeaders = headerRow(paidSheetSel.value);
+
+  mainColumnSel.innerHTML = mainHeaders.map(h => `<option value="${h}">${h}</option>`).join('');
+  paidColumnSel.innerHTML = paidHeaders.map(h => `<option value="${h}">${h}</option>`).join('');
+
+  const guessCol = (headers) => headers.find(h => h.trim().toLowerCase() === 'email') || headers[0];
+  mainColumnSel.value = guessCol(mainHeaders);
+  paidColumnSel.value = guessCol(paidHeaders);
+}
+
+mainSheetSel.addEventListener('change', populateColumnSelects);
+paidSheetSel.addEventListener('change', populateColumnSelects);
+
+function normVal(v){
+  return String(v == null ? '' : v).trim().toLowerCase();
+}
+
+runBtn.addEventListener('click', () => {
+  clearErr(runError);
+  if (!workbook) return;
+
+  const mainName = mainSheetSel.value;
+  const paidName = paidSheetSel.value;
+  const mainCol = mainColumnSel.value;
+  const paidCol = paidColumnSel.value;
+
+  if (mainName === paidName){
+    showErr(runError, 'Main sheet and paid sheet must be different.');
+    return;
+  }
+
+  runBtn.disabled = true;
+  runBtn.textContent = 'Working…';
+
+  try{
+    const mainRows = XLSX.utils.sheet_to_json(workbook.Sheets[mainName], {defval:''});
+    const paidRows = XLSX.utils.sheet_to_json(workbook.Sheets[paidName], {defval:''});
+
+    if (!mainRows.length) throw new Error(`"${mainName}" has no data rows.`);
+
+    const matchSet = new Set();
+    paidRows.forEach(r => {
+      const v = normVal(r[paidCol]);
+      if (v) matchSet.add(v);
+    });
+
+    const keptRows = mainRows.filter(r => !matchSet.has(normVal(r[mainCol])));
+    const removed = mainRows.length - keptRows.length;
+
+    const newSheet = XLSX.utils.json_to_sheet(keptRows);
+    const newWb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(newWb, newSheet, mainName.slice(0,31) || 'Sheet1');
+
+    const wbOut = XLSX.write(newWb, {bookType:'xlsx', type:'array'});
+    const blob = new Blob([wbOut], {type:'application/octet-stream'});
+    const url = URL.createObjectURL(blob);
+
+    const outName = `${originalFileName || 'Lead'} Filtered.xlsx`;
+    const downloadLink = document.getElementById('downloadLink');
+    downloadLink.href = url;
+    downloadLink.setAttribute('download', outName);
+    document.getElementById('outNameHint').textContent = `Saves as "${outName}"`;
+    document.getElementById('totalLeads').textContent = mainRows.length;
+    document.getElementById('removedCount').textContent = removed;
+    document.getElementById('keptCount').textContent = keptRows.length;
+    stepResult.classList.add('show');
+  }catch(err){
+    showErr(runError, err.message || 'Something went wrong while filtering.');
+  }finally{
+    runBtn.disabled = false;
+    runBtn.textContent = 'Remove matched rows';
+  }
+});
+</script>
+</body>
+</html>
